@@ -1,0 +1,15 @@
+#!/bin/sh
+DB="/usr/ports/db"
+if [ -z "$1" ]; then
+  echo ">> Installed packages:"
+  cat "$DB/installed" 2>/dev/null || echo "none"
+else
+  if grep -qxF "$1" "$DB/installed" 2>/dev/null; then
+    echo ">> Package: $1"
+    echo ">> Status: installed"
+    echo ">> Files:"
+    cat "$DB/$1.files" 2>/dev/null || echo "no file records"
+  else
+    echo ">> $1 is not installed"
+  fi
+fi

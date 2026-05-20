@@ -1,0 +1,24 @@
+#!/bin/sh
+PKG="$1"
+DB="/usr/ports/db"
+FILES="$DB/${PKG}.files"
+
+[ -z "$PKG" ] && echo "usage: rat-remove <pkg>" && exit 1
+[ -f "$FILES" ] || { echo "error: $PKG is not installed or has no file records"; exit 1; }
+
+echo ">> removing $PKG ..."
+while IFS= read -r file; do
+  if [ -f "$file" ] || [ -L "$file" ]; then
+    rm -f "$file" && echo "removed $file"
+  fi
+done < "$FILES"
+
+echo ">> cleaning up empty directories ..."
+while IFS= read -r file; do
+  dir="$(dirname "$file")"
+  rmdir --ignore-fail-on-non-empty "$dir" 2>/dev/null
+done < "$FILES"
+
+rm -f "$FILES"
+sed -i "/^${PKG}$/d" "$DB/installed"
+echo ">> done."

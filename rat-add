@@ -1,0 +1,47 @@
+#!/bin/sh
+PKG="$1"
+PORTS_DIR="/usr/ports/tmp"
+DB="/usr/ports/db"
+fail() { echo "error: $1"; exit 1; }
+check_dep() { [ -x "$1" ] || fail "$2"; }
+
+echo ">> RAT-CONFTEST stage started"
+ARCH="$(uname -m)"
+GCC_VER="$(gcc -dumpfullversion 2>/dev/null)"
+echo "[1/4] GCC-VERS: ${GCC_VER:-UNKNOWN}"
+echo "[2/4] ARCHITECTURE: $ARCH"
+check_dep /bin/sh "SH (core script dependency) is not executable"
+echo "[3/4] IS-SH-AVAILABLE: YES"
+check_dep /bin/curl "CURL (core script dependency) is not executable"
+echo "[4/4] IS-CURL-AVAILABLE: YES"
+echo ">> RAT-CONFTEST stage completed"
+
+echo ">> resolving package name..."
+RESOLVED=$(curl -fsSL "https://dists.jewguard.xyz/bigratos/" 2>/dev/null \
+  | grep -o "href=\"${PKG}[^\"]*\.tar\.xz\"" \
+  | sed 's/href="//;s/\.tar\.xz"//' \
+  | sort -V | tail -1)
+[ -z "$RESOLVED" ] && fail "package '$PKG' not found in repo"
+echo ">> resolved: $RESOLVED"
+
+URL="https://dists.jewguard.xyz/bigratos/${RESOLVED}.tar.xz"
+TMPFILE="${PORTS_DIR}/${RESOLVED}.tar.xz"
+WORKDIR="${PORTS_DIR}/${RESOLVED}"
+
+mkdir -p "$PORTS_DIR" "$DB" || fail "failed to create ports directory"
+echo ">> fetching $RESOLVED ..."
+curl -fL "$URL" -o "$TMPFILE" || fail "failed to fetch $RESOLVED"
+echo ">> extracting"
+mkdir -p "$WORKDIR" || fail "failed to create work directory"
+tar -xvJf "$TMPFILE" --strip-components=1 -C "$WORKDIR" || fail "failed to extract archive"
+echo ">> compiling / installing"
+cd "$WORKDIR" || fail "failed to enter work directory"
+find / -not -path '/proc/*' -not -path '/sys/*' -not -path '/usr/ports/*' -not -path '/dev/*' -not -path '/tmp/*' -type f 2>/dev/null | sort > /tmp/rat-before.txt
+sh -e ratbuild.sh || fail "build/install failed"
+find / -not -path '/proc/*' -not -path '/sys/*' -not -path '/usr/ports/*' -not -path '/dev/*' -not -path '/tmp/*' -type f 2>/dev/null | sort > /tmp/rat-after.txt
+comm -13 /tmp/rat-before.txt /tmp/rat-after.txt > "$DB/${PKG}.files"
+rm -f /tmp/rat-before.txt /tmp/rat-after.txt
+grep -qxF "$PKG" "$DB/installed" 2>/dev/null || echo "$PKG" >> "$DB/installed"
+echo ">> done."
+rm -f "$TMPFILE"
+rm -rf "$WORKDIR"

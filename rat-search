@@ -1,0 +1,8 @@
+#!/bin/sh
+[ -z "$1" ] && echo "usage: rat-search <query>" && exit 1
+echo ">> Searching for '$1'..."
+curl -fsSL "https://dists.jewguard.xyz/bigratos/" 2>/dev/null \
+  | grep -o 'href="[^"]*\.tar\.xz"' \
+  | sed 's/href="//;s/\.tar\.xz"//' \
+  | grep -i "$1" \
+  || echo "no results for '$1'"

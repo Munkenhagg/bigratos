@@ -1,0 +1,30 @@
+#!/bin/sh
+DB="/usr/ports/db"
+echo ">> Fetching repo index..."
+REPOLIST=$(curl -fsSL "https://dists.jewguard.xyz/bigratos/" 2>/dev/null \
+  | grep -o 'href="[^"]*\.tar\.xz"' \
+  | sed 's/href="//;s/\.tar\.xz"//')
+
+[ -z "$REPOLIST" ] && echo "error: could not reach repo" && exit 1
+
+while IFS= read -r installed; do
+  # strip version from installed name e.g. neofetch-1.0 -> neofetch
+  base=$(echo "$installed" | sed 's/-[0-9].*//')
+  # find matching package in repo
+  repopkg=$(echo "$REPOLIST" | grep -i "^${base}-\?")
+  [ -z "$repopkg" ] && continue
+  # extract versions
+  instver=$(echo "$installed" | grep -o '[0-9][0-9.]*$')
+  repover=$(echo "$repopkg"   | grep -o '[0-9][0-9.]*$')
+  if [ -z "$instver" ] || [ -z "$repover" ]; then
+    echo ">> $installed: no version info, skipping"
+    continue
+  fi
+  if [ "$instver" = "$repover" ]; then
+    echo ">> $installed: up to date"
+  else
+    echo ">> $installed: updating $instver -> $repover"
+    rat-add "$repopkg"
+  fi
+done < "$DB/installed"
+echo ">> done."
