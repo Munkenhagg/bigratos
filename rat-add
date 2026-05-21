@@ -4,6 +4,7 @@ PORTS_DIR="/usr/ports/tmp"
 DB="/usr/ports/db"
 fail() { echo "error: $1"; exit 1; }
 check_dep() { [ -x "$1" ] || fail "$2"; }
+[ -z "$PKG" ] && echo "usage: rat-add <pkg>" && exit 1
 
 echo ">> RAT-CONFTEST stage started"
 ARCH="$(uname -m)"
@@ -16,15 +17,35 @@ check_dep /bin/curl "CURL (core script dependency) is not executable"
 echo "[4/4] IS-CURL-AVAILABLE: YES"
 echo ">> RAT-CONFTEST stage completed"
 
+cmd_to_pkg() {
+  case "$1" in
+    autoreconf|autoheader|autom4te|autoscan|autoupdate|ifnames) echo "autoconf" ;;
+    automake|aclocal) echo "automake" ;;
+    libtoolize|libtool|ltmain) echo "libtool" ;;
+    pkg-config|pkgconf) echo "pkgconf" ;;
+    cmake) echo "cmake" ;;
+    ninja|ninja-build) echo "ninja" ;;
+    meson) echo "meson" ;;
+    python3|python) echo "python3" ;;
+    perl) echo "perl" ;;
+    flex|lex) echo "flex" ;;
+    bison|yacc) echo "bison" ;;
+    m4) echo "m4" ;;
+    gzip) echo "gzip" ;;
+    xz) echo "xz-utils" ;;
+    *) echo "$1" ;;
+  esac
+}
+
 echo ">> resolving package name..."
-RESOLVED=$(curl -fsSL "https://dists.jewguard.xyz/bigratos/" 2>/dev/null \
+RESOLVED=$(curl -fsSL "https://dists.jewguard.xyz/bigratos/x64-runit/" 2>/dev/null \
   | grep -o "href=\"${PKG}[^\"]*\.tar\.xz\"" \
   | sed 's/href="//;s/\.tar\.xz"//' \
   | sort -V | tail -1)
 [ -z "$RESOLVED" ] && fail "package '$PKG' not found in repo"
 echo ">> resolved: $RESOLVED"
 
-URL="https://dists.jewguard.xyz/bigratos/${RESOLVED}.tar.xz"
+URL="https://dists.jewguard.xyz/bigratos/x64-runit/${RESOLVED}.tar.xz"
 TMPFILE="${PORTS_DIR}/${RESOLVED}.tar.xz"
 WORKDIR="${PORTS_DIR}/${RESOLVED}"
 
@@ -33,14 +54,98 @@ echo ">> fetching $RESOLVED ..."
 curl -fL "$URL" -o "$TMPFILE" || fail "failed to fetch $RESOLVED"
 echo ">> extracting"
 mkdir -p "$WORKDIR" || fail "failed to create work directory"
-tar -xvJf "$TMPFILE" --strip-components=1 -C "$WORKDIR" || fail "failed to extract archive"
+tar -xJf "$TMPFILE" --strip-components=1 -C "$WORKDIR" || fail "failed to extract archive"
 echo ">> compiling / installing"
 cd "$WORKDIR" || fail "failed to enter work directory"
-find / -not -path '/proc/*' -not -path '/sys/*' -not -path '/usr/ports/*' -not -path '/dev/*' -not -path '/tmp/*' -type f 2>/dev/null | sort > /tmp/rat-before.txt
-sh -e ratbuild.sh || fail "build/install failed"
-find / -not -path '/proc/*' -not -path '/sys/*' -not -path '/usr/ports/*' -not -path '/dev/*' -not -path '/tmp/*' -type f 2>/dev/null | sort > /tmp/rat-after.txt
+
+MAX_RETRIES=10
+attempt=0
+installed_deps=""
+
+while [ $attempt -lt $MAX_RETRIES ]; do
+    attempt=$((attempt + 1))
+    echo ">> build attempt $attempt..."
+
+    find / -not -path '/proc/*' -not -path '/sys/*' -not -path '/usr/ports/*' \
+           -not -path '/dev/*' -not -path '/tmp/*' \
+           -type f 2>/dev/null | sort > /tmp/rat-before.txt
+
+    BUILD_LOG=$(sh -e ratbuild.sh 2>&1)
+    BUILD_EXIT=$?
+
+    if [ $BUILD_EXIT -eq 0 ]; then
+        echo "$BUILD_LOG"
+        echo ">> build succeeded"
+        break
+    fi
+
+    echo "$BUILD_LOG"
+    echo ">> build failed, scanning for missing dependencies..."
+
+    RAW_DEP=$(echo "$BUILD_LOG" | grep -oE \
+        "Can't exec \"([a-zA-Z0-9_-]+)\"|"\
+"([a-zA-Z0-9_-]+): command not found|"\
+"failed to run ([a-zA-Z0-9_-]+)|"\
+"not found[: ]+([a-zA-Z0-9_-]+)|"\
+"cannot find -l([a-zA-Z0-9_-]+)|"\
+"No package '([a-zA-Z0-9_-]+)' found|"\
+"Could not find ([a-zA-Z0-9_-]+)|"\
+"fatal error: ([a-zA-Z0-9_-]+)\.h|"\
+"Package ([a-zA-Z0-9_-]+) was not found|"\
+"([a-zA-Z0-9_-]+) is required|"\
+"missing: ([a-zA-Z0-9_-]+)" \
+        | grep -oE '[a-zA-Z0-9][a-zA-Z0-9_-]+' \
+        | grep -v '^error$'   | grep -v '^fatal$' \
+        | grep -v '^not$'     | grep -v '^found$' \
+        | grep -v '^find$'    | grep -v '^could$' \
+        | grep -v '^package$' | grep -v '^command$' \
+        | grep -v '^failed$'  | grep -v '^run$' \
+        | grep -v '^exec$'    | grep -v '^Can$' \
+        | head -1)
+
+    if [ -z "$RAW_DEP" ]; then
+        echo ">> could not identify missing dependency from build log"
+        fail "build/install failed (unknown dependency)"
+    fi
+
+    MISSING_DEP=$(cmd_to_pkg "$RAW_DEP")
+    echo ">> detected missing dependency: $RAW_DEP -> package: $MISSING_DEP"
+
+    case "$installed_deps" in
+        *" $MISSING_DEP "*) fail "already tried installing '$MISSING_DEP', still failing. giving up." ;;
+    esac
+
+    DEP_RESOLVED=$(curl -fsSL "https://dists.jewguard.xyz/bigratos/x64-runit/" 2>/dev/null \
+        | grep -o "href=\"${MISSING_DEP}[^\"]*\.tar\.xz\"" \
+        | sed 's/href="//;s/\.tar\.xz"//' \
+        | sort -V | tail -1)
+
+    if [ -z "$DEP_RESOLVED" ]; then
+        NOLIBDEP=$(echo "$MISSING_DEP" | sed 's/^lib//')
+        DEP_RESOLVED=$(curl -fsSL "https://dists.jewguard.xyz/bigratos/x64-runit/" 2>/dev/null \
+            | grep -o "href=\"${NOLIBDEP}[^\"]*\.tar\.xz\"" \
+            | sed 's/href="//;s/\.tar\.xz"//' \
+            | sort -V | tail -1)
+    fi
+
+    [ -z "$DEP_RESOLVED" ] && fail "missing dependency '$MISSING_DEP' not found in repo. cannot continue."
+
+    echo ">> installing dependency: $DEP_RESOLVED"
+    rat-add "$MISSING_DEP" || fail "failed to install dependency '$MISSING_DEP'"
+    installed_deps="$installed_deps $MISSING_DEP "
+
+    echo ">> retrying build of $PKG..."
+    cd "$WORKDIR" || fail "failed to re-enter work directory"
+done
+
+[ $attempt -ge $MAX_RETRIES ] && fail "reached max retries ($MAX_RETRIES), giving up"
+
+find / -not -path '/proc/*' -not -path '/sys/*' -not -path '/usr/ports/*' \
+       -not -path '/dev/*' -not -path '/tmp/*' \
+       -type f 2>/dev/null | sort > /tmp/rat-after.txt
 comm -13 /tmp/rat-before.txt /tmp/rat-after.txt > "$DB/${PKG}.files"
 rm -f /tmp/rat-before.txt /tmp/rat-after.txt
+
 grep -qxF "$PKG" "$DB/installed" 2>/dev/null || echo "$PKG" >> "$DB/installed"
 echo ">> done."
 rm -f "$TMPFILE"
