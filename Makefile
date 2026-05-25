@@ -6,3 +6,4 @@ make_src:
 clean:
 	@make -C src/ clean
 
+.PHONY: clean make_src
