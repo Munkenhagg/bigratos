@@ -3,6 +3,6 @@
 int main(int argc, char *argv) {
 	rm_files();
 	rm_dirs();
-	unlist_installed()
+	unlist_installed();
 	return 0;
 }

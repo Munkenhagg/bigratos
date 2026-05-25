@@ -1,4 +1,4 @@
-DIRTARGETS := rat-info rat-remove # rat-add rat-search rat-update
+DIRTARGETS := rat-info # rat-remove rat-add rat-search rat-update
 
 .PHONY: all clean $(DIRTARGETS)
 all: $(DIRTARGETS)
