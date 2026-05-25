@@ -1,9 +1,10 @@
-DIRTARGETS := rat-info # rat-add rat-search rat-remove rat-update
+DIRTARGETS := rat-info rat-remove # rat-add rat-search rat-update
 
 .PHONY: all clean $(DIRTARGETS)
 all: $(DIRTARGETS)
 
 $(DIRTARGETS):
+	mkdir -p build/$@
 	@$(MAKE) -C $@
 
 clean:
